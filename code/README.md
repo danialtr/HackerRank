@@ -40,8 +40,7 @@ pip install -r requirements.txt
 ## Run (stage 1)
 
 ```bash
-python code/main.py                  # load test set, show the first claim
-python code/main.py --split sample   # labeled sample set (shows gold output)
-python code/main.py --index 3 --limit 2
-python code/main.py --check          # verify every referenced image resolves
+python code/main.py                  # load test split, log progress + integrity
+python code/main.py --split sample   # load the labeled sample split
+python code/main.py -v               # add per-claim debug logging
 ```
