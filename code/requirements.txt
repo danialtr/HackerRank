@@ -1,0 +1,4 @@
+# Multi-Modal Evidence Review — dependencies
+# Stage 1 (data loading) only needs Pillow; CSV parsing uses the stdlib.
+# VLM / CV / evaluation dependencies will be added as those stages land.
+Pillow>=10.0
