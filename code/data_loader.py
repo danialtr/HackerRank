@@ -16,9 +16,8 @@ import csv
 from pathlib import Path
 from typing import Optional
 
-from PIL import Image
-
 import config
+from image_utils import probe_image
 from models import Claim, ImageRef, UserHistory
 
 # Columns present in claims.csv (inputs only). Anything beyond these in
@@ -51,14 +50,9 @@ def resolve_image(rel_path: str, dataset_root: Path) -> ImageRef:
     if not ref.exists:
         ref.load_error = "file not found"
         return ref
-    try:
-        # Image.open is lazy; reading .size/.format triggers a header parse,
-        # which is enough to confirm the file is a valid, openable image.
-        with Image.open(abs_path) as im:
-            ref.width, ref.height = im.size
-            ref.fmt = im.format
-    except Exception as exc:  # noqa: BLE001 - we want any decode failure flagged
-        ref.load_error = f"{type(exc).__name__}: {exc}"
+    # Reading the header is enough to confirm the file is a valid, openable
+    # image (and catches AVIF/WEBP mislabeled as .jpg).
+    ref.width, ref.height, ref.fmt, ref.load_error = probe_image(abs_path)
     return ref
 
 
