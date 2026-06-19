@@ -16,8 +16,11 @@ from __future__ import annotations
 import argparse
 import textwrap
 
+import PIL
+
 import config
 from data_loader import load_claims, load_user_history
+from image_utils import AVIF_SUPPORT
 from models import Claim
 
 
@@ -86,6 +89,8 @@ def main() -> None:
     args = parser.parse_args()
 
     path = config.sample_claims_csv() if args.split == "sample" else config.claims_csv()
+    avif = "yes" if AVIF_SUPPORT else "NO  -> run: pip install -U Pillow"
+    print(f"Pillow      : {PIL.__version__}  (AVIF decode: {avif})")
     print(f"Dataset dir : {config.dataset_dir()}")
     print(f"Claims file : {path}")
 

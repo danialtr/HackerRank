@@ -1,17 +1,12 @@
 """Image decoding + normalization.
 
-Why this module exists: in this dataset the file *extensions lie*. Many files
-named ``.jpg`` are actually AVIF or WEBP. Two problems follow:
+Several dataset files are AVIF/WEBP saved with a ``.jpg`` extension. Pillow
+>= 11.3 decodes AVIF natively, so all we need is an up-to-date Pillow — no
+extra plugins. If Pillow is too old, AVIF files fail to open; we detect that
+case and return an actionable message instead of a cryptic error.
 
-  1. A stock Pillow build cannot decode AVIF, so those images look "broken"
-     even though they are fine (this is environment-dependent and a portability
-     trap). We register optional AVIF/HEIF openers so decoding works anywhere.
-  2. The Claude vision API accepts JPEG/PNG/GIF/WEBP — not AVIF. And image
-     tokens scale with resolution. So before any model call we decode whatever
-     the real format is, downscale, and re-encode to compact JPEG.
-
-If the optional decoders are missing, we fail soft: real JPEG/PNG/WEBP still
-work; only AVIF/HEIF would be unreadable, and the loader flags those clearly.
+Before any vision call we still normalize every image to JPEG and downscale,
+because the API does not accept AVIF and image tokens scale with resolution.
 """
 
 from __future__ import annotations
@@ -20,27 +15,25 @@ import io
 from pathlib import Path
 from typing import Optional
 
-from PIL import Image
+from PIL import Image, features
 
-# --- Register optional formats so extension-mislabeled files decode anywhere ---
-# pillow-avif-plugin ships self-contained wheels (incl. Windows) and registers
-# AVIF with Pillow on import. pillow-heif is a fallback that also covers AVIF.
-AVIF_SUPPORT = False
-try:  # primary: AVIF plugin
-    import pillow_avif  # noqa: F401  (import has the side effect of registering)
-    AVIF_SUPPORT = True
-except Exception:  # noqa: BLE001
-    try:  # fallback: HEIF/AVIF opener
-        from pillow_heif import register_heif_opener
+# Whether this Pillow build can decode AVIF (True for Pillow >= 11.3 wheels).
+AVIF_SUPPORT = bool(features.check("avif"))
 
-        register_heif_opener()
-        AVIF_SUPPORT = True
-    except Exception:  # noqa: BLE001
-        AVIF_SUPPORT = False
-
-# Anthropic resizes images whose long edge exceeds ~1568px; sending anything
-# larger just wastes tokens. We downscale to this by default.
+# Anthropic resizes images whose long edge exceeds ~1568px; sending larger just
+# wastes tokens, so we downscale to this before encoding.
 DEFAULT_MAX_EDGE = 1568
+
+
+def _looks_like_avif_or_heif(path: Path) -> bool:
+    """Sniff the ISO-BMFF brand so we can give a precise hint on decode failure."""
+    try:
+        head = path.read_bytes()[:16]
+    except Exception:  # noqa: BLE001
+        return False
+    return head[4:8] == b"ftyp" and head[8:12] in (
+        b"avif", b"avis", b"heic", b"heix", b"mif1", b"msf1",
+    )
 
 
 def probe_image(path: Path) -> tuple[Optional[int], Optional[int], Optional[str], Optional[str]]:
@@ -49,6 +42,8 @@ def probe_image(path: Path) -> tuple[Optional[int], Optional[int], Optional[str]
         with Image.open(path) as im:
             return im.size[0], im.size[1], im.format, None
     except Exception as exc:  # noqa: BLE001
+        if not AVIF_SUPPORT and _looks_like_avif_or_heif(path):
+            return None, None, None, "AVIF/HEIF file but Pillow lacks AVIF support — run: pip install -U Pillow"
         return None, None, None, f"{type(exc).__name__}: {exc}"
 
 
@@ -57,13 +52,9 @@ def to_jpeg_bytes(
     max_edge: int = DEFAULT_MAX_EDGE,
     quality: int = 85,
 ) -> tuple[bytes, str, int, int]:
-    """Decode any supported image, downscale, and return JPEG bytes.
-
-    Returns (jpeg_bytes, media_type, out_width, out_height). The output is
-    always ``image/jpeg`` and RGB, safe to hand to the vision API.
-    """
+    """Decode any supported image, downscale, and return (jpeg_bytes, media_type, w, h)."""
     with Image.open(path) as im:
-        im = im.convert("RGB")  # drop alpha / palette; JPEG needs RGB
+        im = im.convert("RGB")  # drop alpha/palette; JPEG needs RGB
         w, h = im.size
         longest = max(w, h)
         if longest > max_edge:

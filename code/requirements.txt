@@ -1,6 +1,4 @@
 # Multi-Modal Evidence Review — dependencies
-# CSV parsing uses the stdlib; images need Pillow + an AVIF decoder because
-# several dataset files are AVIF/WEBP mislabeled with a .jpg extension and a
-# stock Pillow build cannot decode AVIF.
-Pillow>=10.0
-pillow-avif-plugin>=1.4   # registers AVIF support with Pillow (ships wheels incl. Windows)
+# CSV parsing uses the stdlib. Pillow >= 11.3 decodes AVIF natively, which the
+# dataset needs because several files are AVIF/WEBP mislabeled as .jpg.
+Pillow>=11.3
