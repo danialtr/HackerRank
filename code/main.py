@@ -1,75 +1,98 @@
 """Entry point — Multi-Modal Evidence Review.
 
-Loads the inputs (claims + images + user history) and logs progress. Later
-pipeline stages (perception, evidence, decision) hook into this same flow.
+Reads the dataset (claims + images + user history + evidence requirements), runs
+each claim through the perception → decision pipeline, and writes output.csv with
+the exact 14-column schema. Works with or without an API key: with one it uses
+the Claude VLM backend, without one it falls back to the deterministic heuristic
+backend so the whole system still runs end to end.
 
 Usage:
-    python code/main.py                 # load test split (dataset/claims.csv)
-    python code/main.py --split sample  # load labeled sample split
-    python code/main.py -v              # per-claim debug detail
+    python code/main.py                       # test split -> output.csv
+    python code/main.py --split sample        # labeled sample split
+    python code/main.py --backend heuristic   # force deterministic backend
+    python code/main.py --arch mega           # single mega-prompt ablation (VLM)
+    python code/main.py -v                     # per-stage debug detail
+    python code/main.py --limit 3             # process only the first 3 claims
 """
 
 from __future__ import annotations
 
 import argparse
-import logging
-import sys
+import csv
+import json
 
 import PIL
 
 import config
+import schema
+from backends import build_backend
 from data_loader import load_claims, load_user_history
 from image_utils import AVIF_SUPPORT
+from logging_setup import CostMeter, log, setup_logging
+from pipeline.orchestrator import run as run_pipeline
 
-log = logging.getLogger("evidence_review")
 
-
-def setup_logging(verbose: bool = False) -> None:
-    logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.INFO,
-        format="%(asctime)s  %(levelname)-7s %(message)s",
-        datefmt="%H:%M:%S",
-        stream=sys.stdout,
-    )
-    # Keep third-party debug chatter (e.g. Pillow's plugin imports) out of our log.
-    logging.getLogger("PIL").setLevel(logging.INFO)
+def write_output(rows: list[dict], path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=schema.OUTPUT_COLUMNS, quoting=csv.QUOTE_ALL)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({c: row.get(c, "") for c in schema.OUTPUT_COLUMNS})
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Multi-Modal Evidence Review")
-    parser.add_argument("--split", choices=("test", "sample"), default="test",
-                        help="which claims file to load (default: test)")
-    parser.add_argument("-v", "--verbose", action="store_true",
-                        help="log every claim as it is processed")
+    parser.add_argument("--split", choices=("test", "sample"), default="test")
+    parser.add_argument("--backend", choices=("auto", "vlm", "heuristic"), default=None)
+    parser.add_argument("--arch", choices=("pipeline", "mega"), default=None)
+    parser.add_argument("--output", default=None, help="output CSV path (default: <repo>/output.csv)")
+    parser.add_argument("--limit", type=int, default=0, help="process only the first N claims")
+    parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
-    setup_logging(args.verbose)
 
-    log.info("Pillow %s (AVIF decode: %s)", PIL.__version__,
-             "yes" if AVIF_SUPPORT else "NO - run: pip install -U Pillow")
+    logfile = setup_logging(args.verbose)
+    log.info("=== Multi-Modal Evidence Review ===")
+    log.info("Pillow %s (AVIF decode: %s); log file: %s", PIL.__version__,
+             "yes" if AVIF_SUPPORT else "NO", logfile)
 
     path = config.sample_claims_csv() if args.split == "sample" else config.claims_csv()
-    log.info("Loading '%s' split from %s", args.split, config.dataset_dir())
-
     histories = load_user_history()
-    log.info("Loaded %d user-history rows", len(histories))
-
     claims = load_claims(path=path, histories=histories)
-    log.info("Loaded %d claims from %s", len(claims), path.name)
+    if args.limit:
+        claims = claims[: args.limit]
+    log.info("Loaded %d user-history rows and %d claims from %s",
+             len(histories), len(claims), path.name)
 
-    total = usable = problems = 0
-    for i, c in enumerate(claims, 1):
-        total += len(c.images)
-        usable += len(c.usable_images)
-        log.debug("[%d/%d] %s · %s · %d image(s)", i, len(claims),
-                  c.user_id, c.claim_object, len(c.images))
-        for im in c.images:
-            if not im.usable:
-                problems += 1
-                log.warning("%s: image '%s' unusable (%s)",
-                            c.user_id, im.image_id, im.load_error)
+    total = sum(len(c.images) for c in claims)
+    usable = sum(len(c.usable_images) for c in claims)
+    log.info("Image integrity: %d/%d usable across %d claims", usable, total, len(claims))
 
-    log.info("Image integrity: %d/%d usable, %d problem(s)", usable, total, problems)
-    log.info("Done loading '%s' split.", args.split)
+    meter = CostMeter()
+    backend = build_backend(meter, force=args.backend)
+    arch = args.arch or config.architecture()
+
+    rows = run_pipeline(claims, backend, arch=arch)
+    backend.close()
+
+    if args.output:
+        from pathlib import Path
+        out_path = Path(args.output).resolve()
+    else:
+        out_path = config.output_csv_path()
+    write_output(rows, out_path)
+    log.info("Wrote %d rows to %s", len(rows), out_path)
+
+    # ----- operational summary ------------------------------------------- #
+    summary = meter.summary()
+    summary["backend"] = backend.name
+    summary["architecture"] = arch
+    log.info("Operational summary: %s", json.dumps(summary, indent=2))
+
+    statuses: dict[str, int] = {}
+    for r in rows:
+        statuses[r["claim_status"]] = statuses.get(r["claim_status"], 0) + 1
+    log.info("claim_status distribution: %s", statuses)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,9 @@
 """Typed data structures for the claim-verification pipeline.
 
 These are plain dataclasses, deliberately light. The loader (``data_loader.py``)
-fills them from the dataset CSVs and images; later pipeline stages read from
-them. Keeping the inputs in typed objects means the rest of the system never
+fills the input objects from the dataset CSVs and images; later pipeline stages
+read from them and produce the result objects (perception → evidence → history →
+fusion). Keeping everything in typed objects means the rest of the system never
 has to re-parse raw CSV strings or re-resolve image paths.
 """
 
@@ -13,6 +14,9 @@ from pathlib import Path
 from typing import Optional
 
 
+# --------------------------------------------------------------------------- #
+# Inputs (filled by data_loader)
+# --------------------------------------------------------------------------- #
 @dataclass
 class ImageRef:
     """One submitted image, resolved against the dataset folder.
@@ -27,7 +31,7 @@ class ImageRef:
     exists: bool             # file present?
     width: Optional[int] = None
     height: Optional[int] = None
-    fmt: Optional[str] = None       # e.g. "JPEG"
+    fmt: Optional[str] = None         # e.g. "JPEG"
     load_error: Optional[str] = None  # set if the file could not be opened
 
     @property
@@ -73,3 +77,64 @@ class Claim:
     @property
     def usable_images(self) -> list[ImageRef]:
         return [im for im in self.images if im.usable]
+
+
+# --------------------------------------------------------------------------- #
+# Intermediate results produced by the pipeline stages
+# --------------------------------------------------------------------------- #
+@dataclass
+class ClaimIntent:
+    """Stage 2: what the conversation actually alleges."""
+
+    issue_type: str = "unknown"        # the claimed issue
+    object_part: str = "unknown"       # the claimed part
+    summary: str = ""                  # one-line restatement of the claim
+    conversation_text_instruction: bool = False  # injection attempt in the chat
+
+
+@dataclass
+class PerceptionResult:
+    """Stage 3-5: what a single image shows (one per image)."""
+
+    image_id: str
+    is_claimed_object: bool = True     # is the right object type visible?
+    object_part: str = "unknown"       # which valid part is shown
+    issue_type: str = "unknown"        # visible issue (or none/unknown)
+    severity: str = "unknown"
+    valid_image: bool = True           # usable for automated review?
+    shows_claimed_part: bool = False   # does it show the part the user claimed?
+    flags: list[str] = field(default_factory=list)  # IMAGE_FLAGS subset
+    note: str = ""                     # one-line, image-grounded observation
+    backend: str = ""                  # "vlm" | "heuristic"
+
+
+@dataclass
+class EvidenceDecision:
+    """Stage 6: is the image set sufficient to evaluate the claim?"""
+
+    met: bool = False
+    reason: str = ""
+    requirement_id: str = ""
+
+
+@dataclass
+class HistoryRisk:
+    """Stage 7: risk context derived from user history (never overrides images)."""
+
+    flags: list[str] = field(default_factory=list)
+    note: str = ""
+
+
+@dataclass
+class FusionResult:
+    """Stage 8: the final decision."""
+
+    claim_status: str = "not_enough_information"
+    justification: str = ""
+    supporting_image_ids: list[str] = field(default_factory=list)
+    issue_type: str = "unknown"
+    object_part: str = "unknown"
+    severity: str = "unknown"
+    valid_image: bool = False
+    risk_flags: list[str] = field(default_factory=list)
+    escalated: bool = False            # was the Opus tie-breaker used?

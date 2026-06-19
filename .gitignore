@@ -18,3 +18,6 @@ Thumbs.db
 build/
 dist/
 *.zip
+
+# Runtime logs (per-run traces; regenerated each run)
+code/logs/
