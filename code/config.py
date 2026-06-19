@@ -23,6 +23,33 @@ CODE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = CODE_DIR.parent
 
 
+def _load_dotenv() -> None:
+    """Minimal, dependency-free .env loader.
+
+    Looks for a .env file at the repo root (or code/) and loads simple
+    ``KEY=VALUE`` lines into the environment. Real, already-exported environment
+    variables always win, so an exported ANTHROPIC_API_KEY overrides the file.
+    Secrets are never logged.
+    """
+    for candidate in (REPO_ROOT / ".env", CODE_DIR / ".env"):
+        if not candidate.is_file():
+            continue
+        for raw in candidate.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            if line.lower().startswith("export "):
+                line = line[len("export "):]
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:   # exported env vars take precedence
+                os.environ[key] = value
+
+
+_load_dotenv()
+
+
 # --------------------------------------------------------------------------- #
 # Paths
 # --------------------------------------------------------------------------- #

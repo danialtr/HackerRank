@@ -40,12 +40,20 @@ code/
 
 ```bash
 pip install -r code/requirements.txt
-# secrets come from env vars only:
-export ANTHROPIC_API_KEY=sk-...     # optional — enables the VLM backend
+```
+
+The API key comes from the environment only (never hardcoded). Two ways to set it:
+
+```bash
+# Option 1 — export it in your shell (one-off):
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Option 2 — a .env file at the repo root (auto-loaded by config.py, gitignored):
+cp .env.example .env        # then edit .env and paste your key
 ```
 
 If no key is set the system automatically uses the deterministic **heuristic**
-backend, so it always runs end to end.
+backend, so it always runs end to end. An exported variable overrides `.env`.
 
 ## Run
 
