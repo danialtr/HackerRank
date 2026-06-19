@@ -176,15 +176,15 @@ accuracy than the single mega-prompt. (Winner by overall score above: {winner}.)
 ## Operational analysis
 
 - **Model calls.** Pipeline: 1 cheap text call (claim extraction) + 1 vision
-  call per image + an occasional Opus tie-breaker on ambiguous claims. With ~1.8
-  images/claim that is roughly 3 calls/claim. The mega-prompt uses 1 call/claim
-  but loads every image into one context.
+  call per image. With ~1.8 images/claim that is roughly 2.8 calls/claim; the
+  final decision is deterministic (no model call). The mega-prompt uses 1
+  call/claim but loads every image into one context.
 - **Tokens & images.** See per-strategy lines above. Images are downscaled to a
   ~1568px long edge before encoding (vision tokens scale with resolution), which
   is the single biggest token saver.
 - **Cost.** Per-claim and extrapolated full-test-set cost are shown per strategy,
   computed from live `usage` and the Claude API price table in `config.PRICING`
-  (Opus 4.8 $5/$25, Sonnet 4.6 $3/$15, Haiku 4.5 $1/$5 per 1M in/out).
+  (Sonnet 4.6 $3/$15, Haiku 4.5 $1/$5 per 1M in/out).
 - **Caching.** The large static perception instruction block is sent as a cached
   system block, so repeated per-image calls pay cache-read (~0.1x), not full
   input price.

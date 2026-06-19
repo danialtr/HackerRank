@@ -84,13 +84,12 @@ def evidence_requirements_csv() -> Path:
 # --------------------------------------------------------------------------- #
 # Model tiering (see code/SOLUTION.md §"Technology choices")
 #
-# Tiered strategy: a cheap text model extracts the claim, a mid-tier vision
-# model does the high-volume per-image perception, and the most capable model
-# is reserved for the few genuinely ambiguous fusion decisions.
+# Tiered strategy: a cheap text model extracts the claim and a mid-tier vision
+# model does the high-volume per-image perception. The final decision is made by
+# deterministic code, so no expensive model is needed for fusion.
 # --------------------------------------------------------------------------- #
 MODEL_EXTRACT = os.environ.get("EVR_MODEL_EXTRACT", "claude-haiku-4-5")
 MODEL_PERCEPTION = os.environ.get("EVR_MODEL_PERCEPTION", "claude-sonnet-4-6")
-MODEL_FUSION = os.environ.get("EVR_MODEL_FUSION", "claude-opus-4-8")
 
 # Pricing in USD per 1,000,000 tokens (cached 2026-06; Claude API reference).
 PRICING = {

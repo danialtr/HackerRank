@@ -29,8 +29,8 @@ def build_backend(meter: CostMeter, force: str | None = None) -> PerceptionBacke
             choice = "heuristic"
         else:
             from .vlm import VLMBackend
-            log.info("Backend: VLM (tiered: %s / %s / %s)",
-                     config.MODEL_EXTRACT, config.MODEL_PERCEPTION, config.MODEL_FUSION)
+            log.info("Backend: VLM (tiered: %s extract / %s perception)",
+                     config.MODEL_EXTRACT, config.MODEL_PERCEPTION)
             return VLMBackend(meter)
 
     from .heuristic import HeuristicBackend

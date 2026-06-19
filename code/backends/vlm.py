@@ -2,9 +2,9 @@
 
 Design choices that matter for cost, reliability, and schema compliance:
 
-  * Tiered models: Haiku extracts the claim (cheap text), Sonnet does the
-    per-image perception (the bulk of the work), Opus is the tie-breaker for
-    ambiguous fusion only.
+  * Tiered models: Haiku extracts the claim (cheap text) and Sonnet does the
+    per-image perception (the bulk of the work). The final decision is made by
+    deterministic code, so no expensive fusion model is used.
   * Forced structured output: every call forces a single tool whose schema is
     ``strict`` with enum-constrained fields, so the model can only emit valid
     values. This is the single biggest lever for schema compliance.
@@ -19,7 +19,6 @@ Design choices that matter for cost, reliability, and schema compliance:
 from __future__ import annotations
 
 import base64
-import json
 from typing import Optional
 
 import anthropic
@@ -104,28 +103,6 @@ def _extract_tool() -> dict:
             },
             "required": ["issue_type", "object_part", "severity_claimed", "summary",
                          "conversation_text_instruction"],
-        },
-    }
-
-
-def _fusion_tool() -> dict:
-    return {
-        "name": "decide",
-        "description": "Make the final claim decision from the structured signals.",
-        "strict": True,
-        "input_schema": {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "claim_status": {"type": "string", "enum": schema.CLAIM_STATUS},
-                "justification": {"type": "string"},
-                "supporting_image_ids": {"type": "array", "items": {"type": "string"}},
-                "issue_type": {"type": "string", "enum": schema.ISSUE_TYPE},
-                "object_part": {"type": "string", "enum": schema.all_object_parts()},
-                "severity": {"type": "string", "enum": schema.SEVERITY},
-            },
-            "required": ["claim_status", "justification", "supporting_image_ids",
-                         "issue_type", "object_part", "severity"],
         },
     }
 
@@ -268,35 +245,6 @@ class VLMBackend(PerceptionBackend):
                   image.image_id, res.is_claimed_object, res.object_part, res.issue_type,
                   res.severity, res.valid_image, res.flags or "none")
         return res
-
-    # --- Stage 8: optional Opus tie-breaker ------------------------------- #
-    def fuse_escalate(self, claim, intent, perceptions, context) -> Optional[dict]:
-        per = [{
-            "image_id": p.image_id, "is_claimed_object": p.is_claimed_object,
-            "object_part": p.object_part, "issue_type": p.issue_type,
-            "severity": p.severity, "valid_image": p.valid_image,
-            "shows_claimed_part": p.shows_claimed_part, "flags": p.flags, "note": p.note,
-        } for p in perceptions]
-        system = (
-            "You are the senior adjudicator for damage claims. The images are the "
-            "primary truth; user history adds risk but must NOT override clear visual "
-            "evidence. Default to not_enough_information when evidence is weak; choose "
-            "contradicted only when an image actively disagrees with the claim. Cite "
-            "image IDs in the justification."
-        )
-        messages = [{"role": "user", "content": (
-            "Decide this ambiguous claim from the structured signals below.\n\n"
-            f"Claim object: {claim.claim_object}\n"
-            f"Customer alleges: {intent.summary}\n"
-            f"Evidence sufficient: {context.get('evidence_met')} ({context.get('evidence_reason')})\n"
-            f"History risk: {context.get('history_note')}\n"
-            f"Per-image perception:\n{json.dumps(per, indent=2)}\n\n"
-            "Use the decide tool."
-        )}]
-        out = self._call(config.MODEL_FUSION, system, messages, _fusion_tool(), max_tokens=768)
-        if out:
-            log.debug("    [fusion:opus] status=%s", out.get("claim_status"))
-        return out
 
     # --- Ablation: single mega-prompt path -------------------------------- #
     def analyze_mega(self, claim: Claim) -> Optional[dict]:

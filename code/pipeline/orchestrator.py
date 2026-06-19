@@ -24,13 +24,20 @@ from pipeline.history_risk import assess_history
 
 def _row_from_fusion(claim: Claim, fusion, evidence) -> dict:
     met = fusion.claim_status != "not_enough_information"
+    # Keep the reason consistent with the emitted boolean: if the part was
+    # visible but the verdict is still NEI, say we couldn't determine the damage.
+    if met or not evidence.met:
+        reason = evidence.reason
+    else:
+        reason = ("The claimed part is visible, but the images do not show enough "
+                  "to confirm or refute the claimed damage.")
     return {
         "user_id": claim.user_id,
         "image_paths": claim.image_paths_raw,
         "user_claim": claim.user_claim,
         "claim_object": claim.claim_object,
         "evidence_standard_met": schema.norm_bool(met),
-        "evidence_standard_met_reason": evidence.reason,
+        "evidence_standard_met_reason": reason,
         "risk_flags": schema.norm_risk_flags(fusion.risk_flags),
         "issue_type": schema.norm_issue_type(fusion.issue_type),
         "object_part": schema.norm_object_part(fusion.object_part, claim.claim_object),
@@ -81,16 +88,16 @@ def process_claim(claim: Claim, backend, requirements: dict, arch: str) -> dict:
     perceptions = [backend.analyze_image(claim, im, intent) for im in claim.images]
     evidence = decide_evidence(claim, intent, perceptions, requirements)
     history = assess_history(claim.history)
-    fusion = fuse(claim, intent, perceptions, evidence, history, backend=backend)
+    fusion = fuse(claim, intent, perceptions, evidence, history)
     row = _row_from_fusion(claim, fusion, evidence)
 
     problems = schema.validate_row(row)
     if problems:
         log.warning("  schema issues for %s: %s", claim.user_id, problems)
-    log.info("  %-9s %-7s | %d img | %-22s | issue=%s part=%s sev=%s flags=%s%s",
+    log.info("  %-9s %-7s | %d img | %-22s | issue=%s part=%s sev=%s flags=%s",
              claim.user_id, claim.claim_object, n_imgs, row["claim_status"],
              row["issue_type"], row["object_part"], row["severity"],
-             row["risk_flags"], " [escalated]" if fusion.escalated else "")
+             row["risk_flags"])
     return row
 
 

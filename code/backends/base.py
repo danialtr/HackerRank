@@ -2,9 +2,7 @@
 
 A backend is responsible only for *perception* — turning a conversation and an
 image into structured signals. It never makes the final ruling; that is the job
-of the deterministic fusion stage. The one exception is ``fuse_escalate``, an
-optional capability the VLM backend uses to break genuinely ambiguous ties; the
-heuristic backend returns ``None`` (no escalation available).
+of the deterministic fusion stage.
 """
 
 from __future__ import annotations
@@ -29,11 +27,6 @@ class PerceptionBackend(abc.ABC):
     @abc.abstractmethod
     def analyze_image(self, claim: Claim, image: ImageRef, intent: ClaimIntent) -> PerceptionResult:
         """Stage 3-5: describe one image (object, part, issue, quality, authenticity)."""
-
-    def fuse_escalate(self, claim: Claim, intent: ClaimIntent,
-                      perceptions: list[PerceptionResult], context: dict) -> Optional[dict]:
-        """Optional Opus tie-breaker for ambiguous fusion. Default: not available."""
-        return None
 
     def analyze_mega(self, claim: Claim) -> Optional[dict]:
         """Optional single-call 'mega-prompt' path (the ablation baseline)."""

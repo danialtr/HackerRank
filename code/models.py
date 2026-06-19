@@ -137,4 +137,3 @@ class FusionResult:
     severity: str = "unknown"
     valid_image: bool = False
     risk_flags: list[str] = field(default_factory=list)
-    escalated: bool = False            # was the Opus tie-breaker used?

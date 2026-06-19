@@ -111,9 +111,9 @@ Run this loop over `claims.csv` → `output.csv`. Run the same loop over
   - a valid image shows the part **without** the claimed damage, or a different
     object → `contradicted`
   - otherwise → `not_enough_information`
-- **Ambiguity:** genuinely conflicting cases can be escalated to the **Opus**
-  tie-breaker (VLM backend only); history flags are then re-applied on top, but
-  still cannot change the status.
+- **Fully deterministic:** the verdict is decided entirely in code — no model
+  call. History flags are applied on top but, by construction, cannot change the
+  status.
 
 ### Step "write" — Normalise & validate (`schema.py`, `orchestrator.py`)
 - Every field is snapped to the nearest allowed enum, booleans rendered as
@@ -140,16 +140,16 @@ runtime log) with no credentials at all.
 |---|---|---|
 | Claim extraction (text) | **Haiku 4.5** (`claude-haiku-4-5`) | cheapest; text-only task |
 | Per-image perception (vision) | **Sonnet 4.6** (`claude-sonnet-4-6`) | the high-volume work; strong vision at moderate cost |
-| Hard-case fusion tie-breaker | **Opus 4.8** (`claude-opus-4-8`) | reserved for the few genuinely ambiguous claims |
+| Fusion (the decision) | **none — deterministic code** | guarantees the precedence rule + enum compliance; no expensive model needed |
 
 Pricing (per 1M input/output tokens, from the Claude API reference, encoded in
-`config.PRICING`): Opus 4.8 $5/$25, Sonnet 4.6 $3/$15, Haiku 4.5 $1/$5.
+`config.PRICING`): Sonnet 4.6 $3/$15, Haiku 4.5 $1/$5.
 
 ## 6. Models, frameworks, and libraries
 
 | Category | What we use | Where / why |
 |---|---|---|
-| **LLM / VLM** | Claude **Haiku 4.5**, **Sonnet 4.6**, **Opus 4.8** | tiered perception + tie-breaker (`backends/vlm.py`) |
+| **LLM / VLM** | Claude **Haiku 4.5**, **Sonnet 4.6** | tiered perception — extraction + per-image vision (`backends/vlm.py`) |
 | **LLM SDK** | `anthropic` (official Python SDK) | Messages API, forced tool-use structured output, prompt caching, automatic 429/5xx retry |
 | **Structured output** | tool-use with `strict: true` + enum schemas, forced `tool_choice` | guarantees enum-valid fields (`backends/vlm.py`) |
 | **Classical CV** | `numpy` + `Pillow` | blur (Laplacian variance) + brightness for quality flags (`backends/heuristic.py`) |
@@ -167,8 +167,7 @@ a file** (`code/logs/run_<timestamp>.log`):
 - a **per-claim header** (`[3/44] processing claim by user_004 ...`)
 - a **per-stage trace** at `-v` (`-v`/`--verbose`): the extracted claim, each
   image's perception (`obj/part/issue/severity/valid/flags`), the evidence
-  decision, the history flags, and the fused verdict (incl. `[escalated]` when
-  the Opus tie-breaker fired)
+  decision, the history flags, and the fused verdict
 - a one-line **verdict summary** per claim even without `-v`
 - a live **token + cost meter** (`CostMeter`) accumulated across the run and
   printed as an **operational summary** at the end (model calls, in/out tokens,

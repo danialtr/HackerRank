@@ -1,11 +1,9 @@
 """Stage 8: decision fusion — the adjudicator.
 
 Combines the claim intent, per-image perception, evidence sufficiency, and
-history risk into the final verdict. The decision is deterministic by default;
-genuinely ambiguous cases may be escalated to the Opus tie-breaker (when the VLM
-backend is in use). The precedence rule is enforced structurally: history only
-adds flags, it can never change ``supported`` ↔ ``contradicted`` ↔
-``not_enough_information``.
+history risk into the final verdict. The decision is fully deterministic. The
+precedence rule is enforced structurally: history only adds flags, it can never
+change ``supported`` ↔ ``contradicted`` ↔ ``not_enough_information``.
 """
 
 from __future__ import annotations
@@ -36,7 +34,7 @@ def _compatible(visible: str, claimed: str) -> bool:
 
 
 def fuse(claim: Claim, intent: ClaimIntent, perceptions: list[PerceptionResult],
-         evidence: EvidenceDecision, history: HistoryRisk, backend=None) -> FusionResult:
+         evidence: EvidenceDecision, history: HistoryRisk) -> FusionResult:
     valid = [p for p in perceptions if p.valid_image]
     overall_valid = len(valid) > 0 and not any(
         ("non_original_image" in p.flags or "possible_manipulation" in p.flags) for p in valid
@@ -70,23 +68,7 @@ def fuse(claim: Claim, intent: ClaimIntent, perceptions: list[PerceptionResult],
     else:
         status = "not_enough_information"
 
-    # ----- optional Opus tie-breaker for ambiguous cases ----------------- #
-    escalated = False
-    ambiguous = (
-        (status == "not_enough_information" and evidence.met and valid)
-        or (confirming and (contradicting or identity_mismatch))
-    )
-    opus = None
-    if ambiguous and backend is not None:
-        opus = backend.fuse_escalate(claim, intent, perceptions, {
-            "evidence_met": evidence.met, "evidence_reason": evidence.reason,
-            "history_note": history.note,
-        })
-    if opus:
-        status = opus.get("claim_status", status)
-        escalated = True
-
-    res = FusionResult(claim_status=status, escalated=escalated, valid_image=overall_valid)
+    res = FusionResult(claim_status=status, valid_image=overall_valid)
 
     # ----- choose the reported content fields ---------------------------- #
     relevant_shown = [p for p in valid if p.shows_claimed_part]
@@ -109,13 +91,6 @@ def fuse(claim: Claim, intent: ClaimIntent, perceptions: list[PerceptionResult],
         res.issue_type = relevant_shown[0].issue_type if relevant_shown else "unknown"
         res.severity = "unknown"
         res.supporting_image_ids = [p.image_id for p in relevant_shown]
-
-    if opus:  # let the tie-breaker override the content too
-        res.issue_type = opus.get("issue_type", res.issue_type)
-        res.object_part = opus.get("object_part", res.object_part)
-        res.severity = opus.get("severity", res.severity)
-        if opus.get("supporting_image_ids"):
-            res.supporting_image_ids = opus["supporting_image_ids"]
 
     # ----- risk flags (quality + mismatch + authenticity + history) ------ #
     flags: list[str] = []
@@ -141,14 +116,11 @@ def fuse(claim: Claim, intent: ClaimIntent, perceptions: list[PerceptionResult],
     res.risk_flags = flags
 
     # ----- justification -------------------------------------------------- #
-    if opus and opus.get("justification"):
-        res.justification = opus["justification"]
-    else:
-        res.justification = _justify(status, res, intent, perceptions, history)
+    res.justification = _justify(status, res, intent, perceptions, history)
 
-    log.debug("    [fusion] status=%s issue=%s part=%s sev=%s imgs=%s escalated=%s",
+    log.debug("    [fusion] status=%s issue=%s part=%s sev=%s imgs=%s",
               status, res.issue_type, res.object_part, res.severity,
-              res.supporting_image_ids or "none", escalated)
+              res.supporting_image_ids or "none")
     return res
 
 
