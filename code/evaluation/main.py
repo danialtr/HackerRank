@@ -1,20 +1,20 @@
 """Evaluation harness — scores the system on dataset/sample_claims.csv.
 
-It runs at least two strategies, scores each against the gold labels, and writes
+It runs two VLM strategies, scores each against the gold labels, and writes
 evaluation/evaluation_report.md with:
   * per-column accuracy and the claim_status confusion matrix
-  * a ≥2-strategy comparison (the required ablation)
+  * the ≥2-strategy ablation: the multi-stage pipeline vs a single mega-prompt
   * an operational analysis (model calls, tokens, cost, runtime), extrapolated
     from the sample run to the full test set.
 
+The system is VLM-only, so this requires ANTHROPIC_API_KEY.
+
 Run:
-    python code/evaluation/main.py          # auto backend (VLM if a key is set)
-    python code/evaluation/main.py --backend heuristic
+    python code/evaluation/main.py
 """
 
 from __future__ import annotations
 
-import argparse
 import sys
 import time
 from pathlib import Path
@@ -31,26 +31,6 @@ from logging_setup import CostMeter, log, setup_logging  # noqa: E402
 from pipeline.orchestrator import run as run_pipeline  # noqa: E402
 
 import metrics  # noqa: E402  (code/evaluation is on sys.path[0] when run directly)
-
-
-def trivial_baseline(claims) -> list[dict]:
-    """A naive floor: assume every claim is supported with unknown specifics."""
-    rows = []
-    for c in claims:
-        first = c.usable_images[0].image_id if c.usable_images else "none"
-        rows.append({
-            "evidence_standard_met": "true",
-            "evidence_standard_met_reason": "Assumed sufficient (baseline).",
-            "risk_flags": "none",
-            "issue_type": "unknown",
-            "object_part": "unknown",
-            "claim_status": "supported",
-            "claim_status_justification": "Baseline assumes the claim is supported.",
-            "supporting_image_ids": first,
-            "valid_image": "true",
-            "severity": "unknown",
-        })
-    return rows
 
 
 def count_test_claims() -> int:
@@ -73,9 +53,9 @@ def operational(meter: CostMeter, n_sample: int, n_test: int, runtime_s: float) 
     return s
 
 
-def run_strategy(claims, arch, backend_force) -> tuple[list[dict], dict]:
+def run_strategy(claims, arch) -> tuple[list[dict], dict]:
     meter = CostMeter()
-    backend = build_backend(meter, force=backend_force)
+    backend = build_backend(meter)
     t0 = time.time()
     preds = run_pipeline(claims, backend, arch=arch)
     backend.close()
@@ -83,35 +63,23 @@ def run_strategy(claims, arch, backend_force) -> tuple[list[dict], dict]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Evaluate on sample_claims.csv")
-    parser.add_argument("--backend", choices=("auto", "vlm", "heuristic"), default=None)
-    args = parser.parse_args()
-
     setup_logging(False)
     histories = load_user_history()
     claims = load_claims(path=config.sample_claims_csv(), histories=histories)
     golds = [c.expected for c in claims]
     log.info("Evaluating on %d labeled sample claims", len(claims))
 
-    backend_force = args.backend or config.backend_choice()
-    use_vlm = (backend_force == "vlm") or (backend_force == "auto" and config.has_api_key())
-
     # Strategy A — the multi-stage pipeline (our submitted system).
-    preds_a, ops_a = run_strategy(claims, "pipeline", args.backend)
+    preds_a, ops_a = run_strategy(claims, "pipeline")
     score_a = metrics.score(preds_a, golds)
 
-    # Strategy B — the ablation comparison.
-    if use_vlm:
-        name_b = "VLM single mega-prompt (one call per claim)"
-        preds_b, ops_b = run_strategy(claims, "mega", "vlm")
-    else:
-        name_b = "Trivial claim-echo baseline (no perception)"
-        preds_b = trivial_baseline(claims)
-        ops_b = operational(CostMeter(), len(claims), count_test_claims(), 0.0)
+    # Strategy B — the single mega-prompt ablation (one call per claim).
+    preds_b, ops_b = run_strategy(claims, "mega")
     score_b = metrics.score(preds_b, golds)
 
-    name_a = "Multi-stage pipeline" + (" (VLM)" if use_vlm else " (heuristic)")
-    report = _render_report(name_a, score_a, ops_a, name_b, score_b, ops_b, len(claims), use_vlm)
+    name_a = "Multi-stage pipeline (VLM)"
+    name_b = "VLM single mega-prompt (one call per claim)"
+    report = _render_report(name_a, score_a, ops_a, name_b, score_b, ops_b, len(claims))
 
     out = Path(__file__).resolve().parent / "evaluation_report.md"
     out.write_text(report, encoding="utf-8")
@@ -145,13 +113,12 @@ runtime {ops['runtime_seconds']}s.
 """
 
 
-def _render_report(name_a, sc_a, ops_a, name_b, sc_b, ops_b, n, use_vlm) -> str:
+def _render_report(name_a, sc_a, ops_a, name_b, sc_b, ops_b, n) -> str:
     winner = name_a if sc_a["overall_score"] >= sc_b["overall_score"] else name_b
-    mode = "VLM backend (ANTHROPIC_API_KEY present)" if use_vlm else (
-        "heuristic backend (no API key — deterministic CV + claim-text parsing)")
     return f"""# Evaluation Report — Multi-Modal Evidence Review
 
-Scored on `dataset/sample_claims.csv` ({n} labeled claims). Backend: **{mode}**.
+Scored on `dataset/sample_claims.csv` ({n} labeled claims). Backend: **Claude VLM
+(tiered: Haiku extraction + Sonnet perception)**.
 
 We score the 10 predicted columns: exact (normalised) match for the scalar
 columns, and set-overlap (Jaccard) for the two list columns
@@ -175,10 +142,10 @@ accuracy than the single mega-prompt. (Winner by overall score above: {winner}.)
 
 ## Operational analysis
 
-- **Model calls.** Pipeline: 1 cheap text call (claim extraction) + 1 vision
-  call per image. With ~1.8 images/claim that is roughly 2.8 calls/claim; the
-  final decision is deterministic (no model call). The mega-prompt uses 1
-  call/claim but loads every image into one context.
+- **Model calls.** Pipeline: 1 cheap text call (claim extraction, Haiku) + 1
+  vision call per image (Sonnet). With ~1.8 images/claim that is roughly 2.8
+  calls/claim; the final decision is deterministic (no model call). The
+  mega-prompt uses 1 call/claim but loads every image into one context.
 - **Tokens & images.** See per-strategy lines above. Images are downscaled to a
   ~1568px long edge before encoding (vision tokens scale with resolution), which
   is the single biggest token saver.

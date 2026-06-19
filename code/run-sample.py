@@ -13,7 +13,9 @@ Examples:
     python code/run-sample.py --case case_008            # by image case folder
     python code/run-sample.py --index 1,4,7              # by 1-based row number
     python code/run-sample.py --split test --ids user_002   # a test-split claim (no gold)
-    python code/run-sample.py --ids user_005 --backend vlm -v
+    python code/run-sample.py --ids user_005 -v             # full per-stage trace
+
+Requires ANTHROPIC_API_KEY (the system is VLM-only).
 """
 
 from __future__ import annotations
@@ -115,7 +117,6 @@ def main() -> None:
     ap.add_argument("--index", help="comma-separated 1-based row numbers, e.g. 1,4,7")
     ap.add_argument("--all", action="store_true", help="run every claim in the split")
     ap.add_argument("--list", action="store_true", help="list selectable claims and exit")
-    ap.add_argument("--backend", choices=("auto", "vlm", "heuristic"), default=None)
     ap.add_argument("-v", "--verbose", action="store_true", help="show full per-stage pipeline trace")
     args = ap.parse_args()
 
@@ -139,7 +140,7 @@ def main() -> None:
         sys.exit(1)
 
     meter = CostMeter()
-    backend = build_backend(meter, force=args.backend)
+    backend = build_backend(meter)
     requirements = load_requirements()
     arch = config.architecture()
 

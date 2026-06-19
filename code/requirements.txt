@@ -1,9 +1,5 @@
 # Multi-Modal Evidence Review — dependencies
 #
-# CSV parsing uses the stdlib. The two backends and the pipeline need:
+# CSV parsing uses the stdlib. The VLM pipeline needs:
 Pillow>=11.3        # image decode/downscale/probe; >=11.3 decodes AVIF natively
-numpy>=1.24         # classical-CV stats (blur via Laplacian variance, brightness)
-anthropic>=0.69     # Claude VLM backend (only used when ANTHROPIC_API_KEY is set)
-
-# Optional — only for the MCP orchestration demo in code/mcp_tools/ (off hot path):
-#   mcp>=1.0
+anthropic>=0.69     # Claude VLM backend (required — the system is VLM-only)

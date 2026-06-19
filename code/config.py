@@ -8,9 +8,8 @@ the same code runs unchanged during grading.
 Environment overrides:
   DATASET_DIR   absolute path to the dataset folder (default: <repo>/dataset)
   OUTPUT_CSV    path to write predictions     (default: <repo>/output.csv)
-  EVR_BACKEND   "auto" | "vlm" | "heuristic"  (default: auto)
   EVR_ARCH      "pipeline" | "mega"           (default: pipeline)
-  ANTHROPIC_API_KEY   required only for the VLM backend
+  ANTHROPIC_API_KEY   REQUIRED — the system is VLM-only
 """
 
 from __future__ import annotations
@@ -101,11 +100,6 @@ PRICING = {
 # Cache economics (prompt caching): writes ~1.25x base input, reads ~0.1x.
 CACHE_WRITE_MULT = 1.25
 CACHE_READ_MULT = 0.10
-
-
-def backend_choice() -> str:
-    """auto -> vlm if a key is present, else heuristic."""
-    return os.environ.get("EVR_BACKEND", "auto").strip().lower()
 
 
 def architecture() -> str:

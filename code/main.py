@@ -1,16 +1,14 @@
 """Entry point — Multi-Modal Evidence Review.
 
 Reads the dataset (claims + images + user history + evidence requirements), runs
-each claim through the perception → decision pipeline, and writes output.csv with
-the exact 14-column schema. Works with or without an API key: with one it uses
-the Claude VLM backend, without one it falls back to the deterministic heuristic
-backend so the whole system still runs end to end.
+each claim through the Claude VLM perception → deterministic decision pipeline,
+and writes output.csv with the exact 14-column schema. The system is VLM-only and
+requires ANTHROPIC_API_KEY (set it directly or via a .env file).
 
 Usage:
     python code/main.py                       # test split -> output.csv
     python code/main.py --split sample        # labeled sample split
-    python code/main.py --backend heuristic   # force deterministic backend
-    python code/main.py --arch mega           # single mega-prompt ablation (VLM)
+    python code/main.py --arch mega           # single mega-prompt ablation
     python code/main.py -v                     # per-stage debug detail
     python code/main.py --limit 3             # process only the first 3 claims
 """
@@ -44,7 +42,6 @@ def write_output(rows: list[dict], path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Multi-Modal Evidence Review")
     parser.add_argument("--split", choices=("test", "sample"), default="test")
-    parser.add_argument("--backend", choices=("auto", "vlm", "heuristic"), default=None)
     parser.add_argument("--arch", choices=("pipeline", "mega"), default=None)
     parser.add_argument("--output", default=None, help="output CSV path (default: <repo>/output.csv)")
     parser.add_argument("--limit", type=int, default=0, help="process only the first N claims")
@@ -69,7 +66,7 @@ def main() -> None:
     log.info("Image integrity: %d/%d usable across %d claims", usable, total, len(claims))
 
     meter = CostMeter()
-    backend = build_backend(meter, force=args.backend)
+    backend = build_backend(meter)
     arch = args.arch or config.architecture()
 
     rows = run_pipeline(claims, backend, arch=arch)

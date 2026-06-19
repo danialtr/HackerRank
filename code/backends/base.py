@@ -1,4 +1,4 @@
-"""The PerceptionBackend interface shared by the VLM and heuristic backends.
+"""The PerceptionBackend interface for the VLM perception backend.
 
 A backend is responsible only for *perception* — turning a conversation and an
 image into structured signals. It never makes the final ruling; that is the job

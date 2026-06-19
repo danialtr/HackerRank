@@ -105,7 +105,7 @@ class PerceptionResult:
     shows_claimed_part: bool = False   # does it show the part the user claimed?
     flags: list[str] = field(default_factory=list)  # IMAGE_FLAGS subset
     note: str = ""                     # one-line, image-grounded observation
-    backend: str = ""                  # "vlm" | "heuristic"
+    backend: str = ""                  # "vlm"
 
 
 @dataclass

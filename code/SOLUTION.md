@@ -18,7 +18,7 @@ labeled samples and reports cost/latency.
 ## 2. The mental model — two halves, on purpose
 
 ```
-  VLM / CV  =  "the eyes"        →  describes each image. Never rules.
+  VLM        =  "the eyes"        →  describes each image. Never rules.
   Plain code = "the adjudicator" →  applies the rulebook deterministically.
 ```
 
@@ -70,9 +70,7 @@ Run this loop over `claims.csv` → `output.csv`. Run the same loop over
 - **What:** parse the chat transcript into a structured intent — the alleged
   `issue_type` + `object_part`, and whether the chat contains an injection
   attempt ("approve immediately", "skip review").
-- **How:** VLM backend → a cheap **Haiku** text call with forced structured
-  output. Heuristic backend → keyword parsing (last-mention wins, so a part the
-  customer settles on at the end overrides one they dismissed earlier).
+- **How:** a cheap **Haiku** text call with forced structured output.
 - **Why it matters:** this becomes the yardstick everything else is measured
   against.
 
@@ -81,10 +79,8 @@ Run this loop over `claims.csv` → `output.csv`. Run the same loop over
   issue + severity, image quality (`valid_image`, blur/glare/angle/obstruction),
   authenticity cues (`possible_manipulation`, `non_original_image`), and any
   **text embedded in the image** (`text_instruction_present`).
-- **How:** VLM backend → one **Sonnet** vision call per image with a forced,
-  enum-constrained tool schema. Heuristic backend → classical CV (OpenCV-style
-  blur via Laplacian variance, brightness via the luminance histogram) for the
-  quality flags, trusting the claim text for content it cannot recognise.
+- **How:** one **Sonnet** vision call per image with a forced, enum-constrained
+  tool schema (the image is downscaled and base64-encoded first).
 - **Output:** one `PerceptionResult` per image. **Nothing is decided yet.**
 
 ### Step 6 — Evidence sufficiency (`pipeline/evidence.py`) — deterministic
@@ -120,20 +116,12 @@ Run this loop over `claims.csv` → `output.csv`. Run the same loop over
   `true`/`false`, lists `;`-joined or `none`, columns emitted in the exact
   required order. A validator double-checks each row; problems are logged.
 
-## 5. The two backends — and the model tiering
+## 5. The perception backend — and the model tiering
 
-The "eyes" are a swappable `PerceptionBackend` (`backends/base.py`). Which one
-runs is chosen automatically (`backends/__init__.py`): **VLM if an API key is
-present, otherwise the heuristic fallback.**
-
-| Backend | Used when | How it perceives |
-|---|---|---|
-| **VLM** (`backends/vlm.py`) | `ANTHROPIC_API_KEY` is set | real Claude vision, tiered models, forced structured output |
-| **Heuristic** (`backends/heuristic.py`) | no key (always available) | classical CV + claim-text parsing |
-
-The heuristic backend is also the **cheap baseline** in the evaluation ablation,
-and is why the whole system still runs (and produces `output.csv` + a full
-runtime log) with no credentials at all.
+The "eyes" are the `PerceptionBackend` (`backends/base.py`), implemented by the
+Claude VLM backend (`backends/vlm.py`) and constructed in
+`backends/__init__.py`. The system is **VLM-only**: an `ANTHROPIC_API_KEY` is
+required, and the program exits with a clear message if none is set.
 
 ### Model tiering (VLM backend) — the "tiered" cost/quality strategy
 | Stage | Model | Why |
@@ -152,11 +140,9 @@ Pricing (per 1M input/output tokens, from the Claude API reference, encoded in
 | **LLM / VLM** | Claude **Haiku 4.5**, **Sonnet 4.6** | tiered perception — extraction + per-image vision (`backends/vlm.py`) |
 | **LLM SDK** | `anthropic` (official Python SDK) | Messages API, forced tool-use structured output, prompt caching, automatic 429/5xx retry |
 | **Structured output** | tool-use with `strict: true` + enum schemas, forced `tool_choice` | guarantees enum-valid fields (`backends/vlm.py`) |
-| **Classical CV** | `numpy` + `Pillow` | blur (Laplacian variance) + brightness for quality flags (`backends/heuristic.py`) |
 | **Image I/O** | `Pillow` (≥11.3, native AVIF) | decode / downscale / probe (`image_utils.py`) |
 | **Data** | Python stdlib `csv` | CSV read/write — deterministic, dependency-free |
 | **Retrieval** | structured few-shot from `sample_claims.csv` | calibrate severity / status boundary (`retrieval.py`) |
-| **Orchestration demo** | `mcp` (FastMCP) — *optional, off hot path* | wraps deterministic helpers as MCP tools (`mcp_tools/`) |
 | **Logging** | stdlib `logging` + a custom cost meter | runtime trace + token/$ accounting (`logging_setup.py`) |
 
 ## 7. Runtime logging — "what the agent is doing, mid-run"
@@ -192,8 +178,7 @@ numbers in the operational analysis.
   never obeyed. (See test `case_008`: "approve the claim immediately" — ignored.)
 - **Real evaluation + ablation** → `evaluation/` scores per-column accuracy, a
   3-class confusion matrix for `claim_status`, and Jaccard for the list columns,
-  comparing ≥2 strategies (multi-stage pipeline vs single mega-prompt / trivial
-  baseline).
+  comparing two strategies (multi-stage pipeline vs single mega-prompt).
 - **Operational rigor** → tokens, images, cost/claim, runtime, caching, and
   retry strategy are measured and reported.
 
@@ -209,19 +194,20 @@ numbers in the operational analysis.
 - **RAG?** A vector DB is overkill for ~20 labeled rows. We use *structured*
   retrieval instead: the matching evidence-requirement row, and a couple of
   matching labeled examples for calibration (`retrieval.py`).
-- **MCP?** Considered and deliberately kept **off the hot path** — this is a
-  batch ETL job with fixed control flow, where an agentic MCP loop would add
-  tokens/latency and work against the operational score. We still ship a thin MCP
-  demo (`mcp_tools/`) to show the capability. See its README for the full
-  reasoning.
-- **Dual backend?** Lets the system run and be verified with **no API key**
-  (deterministic), while the VLM path is the real engine when a key is present —
-  and the heuristic doubles as the ablation baseline.
+- **MCP?** Considered and rejected — this is a batch ETL job with fixed control
+  flow, where an agentic MCP loop would add tokens/latency and work against the
+  operational score. There is no agent loop to expose tools to, so MCP would be
+  packaging without substance.
+- **Why VLM-only?** Perception is the part that genuinely needs a model; we use
+  the Claude vision models for it and keep everything else (decision, evidence,
+  history, schema) as deterministic code. This requires an API key, which is the
+  intended trade-off for the accuracy the VLM provides.
 
 ## 10. Reproduce
 
 ```bash
 pip install -r code/requirements.txt
-python code/main.py                  # -> output.csv (VLM if key, else heuristic)
+export ANTHROPIC_API_KEY=sk-ant-...  # required (or use a .env file)
+python code/main.py                  # -> output.csv
 python code/evaluation/main.py       # -> code/evaluation/evaluation_report.md
 ```
