@@ -1,4 +1,6 @@
 # Multi-Modal Evidence Review — dependencies
-# Stage 1 (data loading) only needs Pillow; CSV parsing uses the stdlib.
-# VLM / CV / evaluation dependencies will be added as those stages land.
+# CSV parsing uses the stdlib; images need Pillow + an AVIF decoder because
+# several dataset files are AVIF/WEBP mislabeled with a .jpg extension and a
+# stock Pillow build cannot decode AVIF.
 Pillow>=10.0
+pillow-avif-plugin>=1.4   # registers AVIF support with Pillow (ships wheels incl. Windows)
